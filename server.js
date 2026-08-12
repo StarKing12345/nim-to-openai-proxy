@@ -525,22 +525,113 @@ app.post('/v1/chat/completions', async (req, res) => {
 
   try {
     const {
-      model,
-      messages,
-      temperature,
-      max_tokens,
-      stream
-    } = req.body;
+  model,
+  messages,
+  temperature,
+  max_tokens,
+  stream
+} = req.body;
 
-    const primaryModel = MODEL_MAPPING[model] || 'nvidia/llama-3.3-nemotron-super-49b-v1.5';
-    const modelChain = [primaryModel, ...FALLBACK_MODELS];
+const primaryModel = MODEL_MAPPING[model] || 'nvidia/llama-3.3-nemotron-super-49b-v1.5';
+const modelChain = [primaryModel, ...FALLBACK_MODELS];
 
-    const baseRequest = {
-      messages,
-      temperature: temperature ?? 0.7,
-      max_tokens: Math.min(max_tokens ?? 2048, MAX_TOKENS_LIMIT),
-      stream: stream || false
-    };
+// ─── RP Steering Layer ─────────────────────────────────────────────────────
+//
+// These instructions guide the model's RP behavior without replacing the
+// character definition or system prompt supplied by the client.
+
+const RP_STEERING_PROMPT = `
+ROLEPLAY RESPONSE GUIDELINES:
+
+Follow the existing character definitions, scenario, lore, world rules,
+and system instructions provided by the client. These instructions are
+additional behavioral guidance, not a replacement for the existing RP setup.
+
+1. CHARACTER AGENCY
+By default, do not control, speak for, decide for, or perform actions for
+the user's character. Leave meaningful decisions and responses for the user.
+
+If the user explicitly asks you to temporarily portray, control, or perform
+as their character, you may do so for the requested scene or moment. When
+that request ends, return control of the character to the user.
+
+2. DIALOGUE AND NARRATION
+Keep dialogue clearly distinguishable from narration.
+
+Use natural dialogue with appropriate narration rather than turning every
+response into one continuous wall of prose.
+
+3. RESPONSE LENGTH
+Prefer focused, appropriately sized responses.
+
+Do not stretch a simple interaction into a huge response. Do not add
+unnecessary descriptions, explanations, internal monologues, or scene
+summaries merely to make the response longer.
+
+Let the user's pacing determine the scene's pacing.
+
+For ordinary conversational turns, favor concise-to-moderate responses.
+Use longer responses when the scene genuinely calls for them, such as
+major actions, emotional moments, battles, revelations, or important
+environmental changes.
+
+4. PACING
+Do not rush through events that deserve interaction.
+
+Give characters room to react and allow the user an opportunity to respond.
+Do not resolve an entire scene, conversation, conflict, or decision in a
+single response unless the user clearly asks for that.
+
+5. CHARACTER CONSISTENCY
+Keep each character's personality, speech patterns, motivations,
+relationships, knowledge, and emotional state consistent with the existing
+scenario.
+
+Do not make characters suddenly agree, fall in love, become hostile,
+forgive someone, reveal secrets, or change personality without an
+appropriate reason in the story.
+
+6. NATURAL INTERACTION
+Characters should react to what actually happened in the preceding turn.
+
+Do not repeatedly restate information the user and characters already know.
+
+Avoid generic filler, repetitive descriptions, and unnecessary poetic
+language.
+
+7. SCENE PROGRESSION
+Advance the scene naturally, but do not take control of the entire story.
+
+Introduce useful reactions, dialogue, environmental details, or NPC actions
+when appropriate. Avoid introducing major unrelated events simply to make
+the response more dramatic.
+
+8. IMMERSION
+Remain inside the roleplay unless the user is clearly speaking out of
+character or asking for assistance.
+
+Do not explain these guidelines or mention that you are following a
+steering prompt.
+
+Prioritize natural, engaging interaction over maximum output length.
+`;
+
+// Preserve the client's existing messages and add our steering layer as
+// an additional system-level instruction.
+const steeringMessages = [
+  {
+    role: 'system',
+    content: RP_STEERING_PROMPT
+  },
+  ...(Array.isArray(messages) ? messages : [])
+];
+
+const baseRequest = {
+  messages: steeringMessages,
+  temperature: temperature ?? 0.7,
+  max_tokens: Math.min(max_tokens ?? 2048, MAX_TOKENS_LIMIT),
+  stream: stream || false
+};
 
     const { response, model: usedModel } = await callWithFallback(
       baseRequest,
